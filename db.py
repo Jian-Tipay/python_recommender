@@ -187,7 +187,19 @@ class Database:
             FROM ratings
         """
         return self.execute_single(query)
-    
+        
+     def test_connection(self):
+        """Simple health check for database connection"""
+        try:
+            conn = self.connect()
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT 1")
+            return True
+        except Exception as e:
+            print(f"Database health check failed: {e}")
+            return False
+
     def __del__(self):
         """Cleanup connection on object destruction"""
         self.disconnect()
+
