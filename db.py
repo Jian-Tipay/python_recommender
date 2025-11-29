@@ -6,189 +6,108 @@ load_dotenv()
 
 class Database:
     def __init__(self):
-        self.host = os.getenv("DB_HOST")
-        self.database = os.getenv("DB_DATABASE")
-        self.user = os.getenv("DB_USERNAME")
-        self.password = os.getenv("DB_PASSWORD")
-        self.port = int(os.getenv("DB_PORT", "3306"))
-        self.connection = None
-
-    def connect(self):
-        try:
-            if self.connection is None:
-                self.connection = pymysql.connect(
-                    host=self.host,
-                    user=self.user,
-                    password=self.password,
-                    database=self.database,
-                    port=self.port,
-                    charset="utf8mb4",
-                    cursorclass=pymysql.cursors.DictCursor
-                )
-            return self.connection
-        except Exception as e:
-            print(f"Error connecting to MySQL: {e}")
-            raise
-
-    def disconnect(self):
+        self.connection = pymysql.connect(
+            host=os.getenv('DB_HOST'),
+            user=os.getenv('DB_USER'),
+            password=os.getenv('DB_PASSWORD'),
+            database=os.getenv('DB_NAME'),
+            port=int(os.getenv('DB_PORT', 3306)),
+            cursorclass=pymysql.cursors.DictCursor
+        )
+    
+    def test_connection(self):
+        """Test database connection"""
+        with self.connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+            return cursor.fetchone()
+    
+    def get_all_ratings(self):
+        """Get all ratings"""
+        with self.connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT user_id, property_id, rating
+                FROM ratings
+                ORDER BY user_id, property_id
+            """)
+            return cursor.fetchall()
+    
+    def get_user_ratings(self, user_id):
+        """Get ratings for a specific user"""
+        with self.connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT property_id, rating
+                FROM ratings
+                WHERE user_id = %s
+                ORDER BY property_id
+            """, (user_id,))
+            return cursor.fetchall()
+    
+    def get_active_properties(self):
+        """Get all active properties (alias method)"""
+        return self.get_all_properties()
+    
+    def get_all_properties(self):
+        """Get all active properties with details"""
+        with self.connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT 
+                    p.id,
+                    p.title,
+                    p.price,
+                    p.distance_from_campus,
+                    p.room_type,
+                    p.address,
+                    COALESCE(AVG(r.rating), 0) as avg_rating,
+                    COUNT(r.rating_id) as rating_count
+                FROM properties p
+                LEFT JOIN ratings r ON p.id = r.property_id
+                WHERE p.is_active = 1
+                GROUP BY p.id
+                ORDER BY p.id
+            """)
+            return cursor.fetchall()
+    
+    def get_property_amenities(self, property_id):
+        """Get amenities for a property"""
+        with self.connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT a.amenity_id, a.amenity_name
+                FROM property_amenities pa
+                JOIN amenities a ON pa.amenity_id = a.amenity_id
+                WHERE pa.property_id = %s
+            """, (property_id,))
+            return cursor.fetchall()
+    
+    def get_user_preference(self, user_id):
+        """Get user preferences"""
+        with self.connection.cursor() as cursor:
+            cursor.execute("""
+                SELECT 
+                    preference_id,
+                    user_id,
+                    preferred_distance,
+                    budget_min,
+                    budget_max,
+                    room_type,
+                    gender_preference
+                FROM student_preferences
+                WHERE user_id = %s
+                LIMIT 1
+            """, (user_id,))
+            result = cursor.fetchone()
+            
+            if result:
+                # Get preferred amenities
+                cursor.execute("""
+                    SELECT amenity_id
+                    FROM preferred_amenities
+                    WHERE preference_id = %s
+                """, (result['preference_id'],))
+                result['preferred_amenities'] = [row['amenity_id'] for row in cursor.fetchall()]
+            
+            return result
+    
+    def close(self):
+        """Close database connection"""
         if self.connection:
             self.connection.close()
-            self.connection = None
-
-    def execute_query(self, query, params=None):
-        try:
-            conn = self.connect()
-            with conn.cursor() as cursor:
-                cursor.execute(query, params)
-                return cursor.fetchall()
-        except Exception as e:
-            print(f"Query error: {e}")
-            raise
-
-    def execute_single(self, query, params=None):
-        try:
-            conn = self.connect()
-            with conn.cursor() as cursor:
-                cursor.execute(query, params)
-                return cursor.fetchone()
-        except Exception as e:
-            print(f"Query error: {e}")
-            raise
-
-    def get_all_ratings(self):
-        query = """
-            SELECT 
-                rating_id,
-                user_id,
-                property_id,
-                rating,
-                created_at
-            FROM ratings
-            ORDER BY created_at DESC
-        """
-        return self.execute_query(query)
-
-    def get_user_ratings(self, user_id):
-        query = """
-            SELECT 
-                rating_id,
-                user_id,
-                property_id,
-                rating,
-                created_at
-            FROM ratings
-            WHERE user_id = %s
-            ORDER BY created_at DESC
-        """
-        return self.execute_query(query, (user_id,))
-
-    def get_property_ratings(self, property_id):
-        query = """
-            SELECT 
-                rating_id,
-                user_id,
-                property_id,
-                rating,
-                created_at
-            FROM ratings
-            WHERE property_id = %s
-            ORDER BY created_at DESC
-        """
-        return self.execute_query(query, (property_id,))
-
-    def get_user_rated_properties(self, user_id):
-        query = """
-            SELECT DISTINCT property_id
-            FROM ratings
-            WHERE user_id = %s
-        """
-        results = self.execute_query(query, (user_id,))
-        return [r['property_id'] for r in results]
-
-    def get_active_properties(self, exclude_ids=None):
-        query = """
-            SELECT 
-                id,
-                title,
-                address,
-                price,
-                distance_from_campus,
-                landlord_id
-            FROM properties
-            WHERE is_active = 1
-        """
-
-        if exclude_ids:
-            placeholders = ",".join(["%s"] * len(exclude_ids))
-            query += f" AND id NOT IN ({placeholders})"
-            return self.execute_query(query, tuple(exclude_ids))
-
-        return self.execute_query(query)
-
-    def get_property_details(self, property_id):
-        query = """
-            SELECT 
-                id,
-                landlord_id,
-                title,
-                description,
-                address,
-                price,
-                distance_from_campus,
-                is_active,
-                created_at
-            FROM properties
-            WHERE id = %s
-        """
-        return self.execute_single(query, (property_id,))
-
-    def get_user_preferences(self, user_id):
-        query = """
-            SELECT 
-                preference_id,
-                user_id,
-                preferred_distance,
-                budget_min,
-                budget_max,
-                room_type,
-                gender_preference
-            FROM student_preferences
-            WHERE user_id = %s
-        """
-        return self.execute_single(query, (user_id,))
-
-    def get_property_amenities(self, property_id):
-        query = """
-            SELECT a.amenity_id, a.amenity_name
-            FROM property_amenities pa
-            JOIN amenities a ON pa.amenity_id = a.amenity_id
-            WHERE pa.property_id = %s
-        """
-        return self.execute_query(query, (property_id,))
-
-    def get_rating_statistics(self):
-        query = """
-            SELECT 
-                COUNT(DISTINCT user_id) as total_users,
-                COUNT(DISTINCT property_id) as total_properties,
-                COUNT(*) as total_ratings,
-                AVG(rating) as avg_rating,
-                MIN(rating) as min_rating,
-                MAX(rating) as max_rating
-            FROM ratings
-        """
-        return self.execute_single(query)
-
-    def test_connection(self):
-        """Simple health check for database connection"""
-        try:
-            conn = self.connect()
-            with conn.cursor() as cursor:
-                cursor.execute("SELECT 1")
-            return True
-        except Exception as e:
-            print(f"Database health check failed: {e}")
-            return False
-
-    def __del__(self):
-        self.disconnect()
