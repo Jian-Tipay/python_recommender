@@ -69,19 +69,30 @@ class EnhancedCollaborativeFilteringEngine:
     
     def _build_user_item_matrix(self):
         """Build user-item rating matrix"""
-        ratings_df = pd.DataFrame(self.db.get_all_ratings())
-        
-        if ratings_df.empty:
+        try:
+            ratings_df = pd.DataFrame(self.db.get_all_ratings())
+            
+            if ratings_df.empty:
+                logger.warning("No ratings found in database")
+                return pd.DataFrame()
+            
+            # Ensure proper data types
+            ratings_df['user_id'] = ratings_df['user_id'].astype(int)
+            ratings_df['property_id'] = ratings_df['property_id'].astype(int)
+            ratings_df['rating'] = ratings_df['rating'].astype(float)
+            
+            matrix = ratings_df.pivot_table(
+                index='user_id',
+                columns='property_id',
+                values='rating',
+                fill_value=0.0
+            )
+            
+            logger.info(f"Built user-item matrix: {matrix.shape[0]} users x {matrix.shape[1]} properties")
+            return matrix
+        except Exception as e:
+            logger.error(f"Error building user-item matrix: {str(e)}")
             return pd.DataFrame()
-        
-        matrix = ratings_df.pivot_table(
-            index='user_id',
-            columns='property_id',
-            values='rating',
-            fill_value=0
-        )
-        
-        return matrix
     
     def _calculate_user_similarity(self):
         """Calculate user-user similarity using cosine similarity"""
@@ -130,86 +141,95 @@ class EnhancedCollaborativeFilteringEngine:
         
         Returns score on 0-100 scale
         """
-        score = 0.0
-        
-        # 1. DISTANCE/PROXIMITY (30 points)
-        distance = property_data.get('distance_from_campus', 999)
-        preferred_distance = user_preference.get('preferred_distance', 2.0)
-        
-        if distance <= preferred_distance:
-            distance_score = 1.0
-        elif distance <= preferred_distance * 1.5:
-            distance_score = 0.6
-        else:
-            distance_score = max(0, 1.0 - (distance - preferred_distance) / 5.0)
-        
-        score += distance_score * self.WEIGHTS['distance']
-        
-        # 2. COST/AFFORDABILITY (25 points)
-        price = property_data.get('price', 0)
-        budget_min = user_preference.get('budget_min', 0)
-        budget_max = user_preference.get('budget_max', 999999)
-        
-        if budget_min <= price <= budget_max:
-            cost_score = 1.0
-        elif price < budget_min:
-            cost_score = 0.7  # Below budget is still acceptable
-        else:
-            # Above budget - penalize
-            cost_score = max(0, 1.0 - (price - budget_max) / budget_max)
-        
-        score += cost_score * self.WEIGHTS['cost']
-        
-        # 3. SAFETY & SECURITY (15 points)
-        # Proxy: average rating (higher ratings suggest safer/better managed)
-        avg_rating = property_data.get('avg_rating', 3.0)
-        safety_score = min(avg_rating / 5.0, 1.0)
-        score += safety_score * self.WEIGHTS['safety']
-        
-        # 4. FACILITIES & AMENITIES (10 points)
-        user_amenities = set(user_preference.get('preferred_amenities', []))
-        property_amenities = set(property_data.get('amenities', []))
-        
-        if user_amenities:
-            amenity_match = len(user_amenities & property_amenities) / len(user_amenities)
-        else:
-            amenity_match = 0.5  # Neutral if no preference
-        
-        score += amenity_match * self.WEIGHTS['facilities']
-        
-        # 5. ROOM TYPE/PRIVACY (10 points)
-        user_room_type = user_preference.get('room_type', 'Any')
-        property_room_type = property_data.get('room_type', 'Any')
-        
-        if user_room_type == 'Any' or property_room_type == 'Any':
-            room_score = 0.8
-        elif user_room_type == property_room_type:
-            room_score = 1.0
-        else:
-            room_score = 0.4
-        
-        score += room_score * self.WEIGHTS['room_type']
-        
-        # 6. MANAGEMENT & MAINTENANCE (5 points)
-        # Proxy: rating count (more ratings = more established)
-        rating_count = property_data.get('rating_count', 0)
-        management_score = min(rating_count / 20.0, 1.0)
-        score += management_score * self.WEIGHTS['management']
-        
-        # 7. SOCIAL & ENVIRONMENTAL (5 points)
-        user_gender_pref = user_preference.get('gender_preference', 'Any')
-        property_gender = property_data.get('gender_restriction', 'Any')
-        
-        if user_gender_pref == 'Any' or property_gender == 'Any':
-            social_score = 0.8
-        elif user_gender_pref == property_gender:
-            social_score = 1.0
-        else:
-            social_score = 0.3
-        
-        score += social_score * self.WEIGHTS['social']
-        
-        return round(score, 2)  # Return 0-100 score
+        try:
+            score = 0.0
+            
+            # 1. DISTANCE/PROXIMITY (30 points)
+            distance = float(property_data.get('distance_from_campus', 999))
+            preferred_distance = float(user_preference.get('preferred_distance', 2.0))
+            
+            if distance <= preferred_distance:
+                distance_score = 1.0
+            elif distance <= preferred_distance * 1.5:
+                distance_score = 0.6
+            else:
+                distance_score = max(0, 1.0 - (distance - preferred_distance) / 5.0)
+            
+            score += distance_score * self.WEIGHTS['distance']
+            
+            # 2. COST/AFFORDABILITY (25 points)
+            price = float(property_data.get('price', 0))
+            budget_min = float(user_preference.get('budget_min', 0))
+            budget_max = float(user_preference.get('budget_max', 999999))
+            
+            if budget_min <= price <= budget_max:
+                cost_score = 1.0
+            elif price < budget_min:
+                cost_score = 0.7  # Below budget is still acceptable
+            else:
+                # Above budget - penalize
+                if budget_max > 0:
+                    cost_score = max(0, 1.0 - (price - budget_max) / budget_max)
+                else:
+                    cost_score = 0.3
+            
+            score += cost_score * self.WEIGHTS['cost']
+            
+            # 3. SAFETY & SECURITY (15 points)
+            # Proxy: average rating (higher ratings suggest safer/better managed)
+            avg_rating = float(property_data.get('avg_rating', 3.0))
+            safety_score = min(avg_rating / 5.0, 1.0)
+            score += safety_score * self.WEIGHTS['safety']
+            
+            # 4. FACILITIES & AMENITIES (10 points)
+            user_amenities = set(user_preference.get('preferred_amenities', []))
+            property_amenities = set(property_data.get('amenities', []))
+            
+            if user_amenities:
+                amenity_match = len(user_amenities & property_amenities) / len(user_amenities)
+            else:
+                amenity_match = 0.5  # Neutral if no preference
+            
+            score += amenity_match * self.WEIGHTS['facilities']
+            
+            # 5. ROOM TYPE/PRIVACY (10 points)
+            user_room_type = str(user_preference.get('room_type', 'Any'))
+            property_room_type = str(property_data.get('room_type', 'Any'))
+            
+            if user_room_type == 'Any' or property_room_type == 'Any':
+                room_score = 0.8
+            elif user_room_type == property_room_type:
+                room_score = 1.0
+            else:
+                room_score = 0.4
+            
+            score += room_score * self.WEIGHTS['room_type']
+            
+            # 6. MANAGEMENT & MAINTENANCE (5 points)
+            # Proxy: rating count (more ratings = more established)
+            rating_count = int(property_data.get('rating_count', 0))
+            management_score = min(rating_count / 20.0, 1.0)
+            score += management_score * self.WEIGHTS['management']
+            
+            # 7. SOCIAL & ENVIRONMENTAL (5 points)
+            user_gender_pref = str(user_preference.get('gender_preference', 'Any'))
+            property_gender = str(property_data.get('gender_restriction', 'Any'))
+            
+            if user_gender_pref == 'Any' or property_gender == 'Any':
+                social_score = 0.8
+            elif user_gender_pref == property_gender:
+                social_score = 1.0
+            else:
+                social_score = 0.3
+            
+            score += social_score * self.WEIGHTS['social']
+            
+            # Ensure score is within 0-100 range
+            return max(0.0, min(100.0, round(score, 2)))
+            
+        except Exception as e:
+            logger.error(f"Error calculating content score: {str(e)}")
+            return 50.0  # Return neutral score on error
     
     def get_hybrid_recommendations(self, user_id: int, limit: int = 10) -> List[Dict]:
         """
@@ -222,124 +242,146 @@ class EnhancedCollaborativeFilteringEngine:
         
         Returns scores on 0-100 scale
         """
-        self._ensure_matrices()
-        
-        # Get user ratings
-        user_ratings = self.db.get_user_ratings(user_id)
-        rated_property_ids = [r['property_id'] for r in user_ratings]
-        
-        # Get all properties
-        all_properties = self.db.get_all_properties()
-        candidate_properties = [p for p in all_properties if p['id'] not in rated_property_ids]
-        
-        if not candidate_properties:
+        try:
+            self._ensure_matrices()
+            
+            # Get user ratings
+            user_ratings = self.db.get_user_ratings(user_id)
+            rated_property_ids = [r['property_id'] for r in user_ratings]
+            
+            # Get all properties
+            all_properties = self.db.get_all_properties()
+            candidate_properties = [p for p in all_properties if p['id'] not in rated_property_ids]
+            
+            if not candidate_properties:
+                logger.info(f"No candidate properties for user {user_id}")
+                return []
+            
+            # Get user preference
+            user_preference = self.db.get_user_preference(user_id)
+            if not user_preference:
+                user_preference = {}
+                logger.info(f"No user preference found for user {user_id}, using defaults")
+            
+            recommendations = []
+            
+            for property_data in candidate_properties:
+                try:
+                    property_id = property_data['id']
+                    
+                    # 1. USER-BASED CF SCORE (40 points max)
+                    user_cf_score_normalized = self._get_user_based_score(user_id, property_id)
+                    user_cf_score = user_cf_score_normalized * 40.0
+                    
+                    # 2. ITEM-BASED CF SCORE (30 points max)
+                    item_cf_score_normalized = self._get_item_based_score(user_id, property_id, user_ratings)
+                    item_cf_score = item_cf_score_normalized * 30.0
+                    
+                    # 3. CONTENT-BASED SCORE (30 points max)
+                    content_score_full = self._calculate_content_score(property_data, user_preference)
+                    content_score = (content_score_full / 100.0) * 30.0
+                    
+                    # WEIGHTED COMBINATION (0-100 scale)
+                    final_score = user_cf_score + item_cf_score + content_score
+                    
+                    # Convert to predicted rating (0-5 scale)
+                    predicted_rating = (final_score / 100.0) * 5.0
+                    
+                    # Confidence based on CF availability
+                    confidence = self._calculate_confidence(user_cf_score_normalized, item_cf_score_normalized)
+                    
+                    recommendations.append({
+                        'property_id': property_id,
+                        'predicted_rating': round(predicted_rating, 2),
+                        'confidence': confidence,
+                        'algorithm': 'hybrid',
+                        'score_breakdown': {
+                            'user_based': round(user_cf_score, 2),
+                            'item_based': round(item_cf_score, 2),
+                            'content': round(content_score, 2)
+                        },
+                        'total_score': round(final_score, 2)  # Add total score for logging
+                    })
+                except Exception as e:
+                    logger.error(f"Error processing property {property_data.get('id', 'unknown')}: {str(e)}")
+                    continue
+            
+            # Sort by total score
+            recommendations.sort(key=lambda x: x['total_score'], reverse=True)
+            
+            logger.info(f"Generated {len(recommendations)} recommendations for user {user_id}")
+            return recommendations[:limit]
+            
+        except Exception as e:
+            logger.error(f"Error in get_hybrid_recommendations for user {user_id}: {str(e)}")
+            import traceback
+            logger.error(traceback.format_exc())
             return []
-        
-        # Get user preference
-        user_preference = self.db.get_user_preference(user_id)
-        if not user_preference:
-            user_preference = {}
-        
-        recommendations = []
-        
-        for property_data in candidate_properties:
-            property_id = property_data['id']
-            
-            # 1. USER-BASED CF SCORE (40 points max)
-            user_cf_score_normalized = self._get_user_based_score(user_id, property_id)
-            user_cf_score = user_cf_score_normalized * 40.0
-            
-            # 2. ITEM-BASED CF SCORE (30 points max)
-            item_cf_score_normalized = self._get_item_based_score(user_id, property_id, user_ratings)
-            item_cf_score = item_cf_score_normalized * 30.0
-            
-            # 3. CONTENT-BASED SCORE (30 points max)
-            content_score_full = self._calculate_content_score(property_data, user_preference)
-            content_score = (content_score_full / 100.0) * 30.0
-            
-            # WEIGHTED COMBINATION (0-100 scale)
-            final_score = user_cf_score + item_cf_score + content_score
-            
-            # Convert to predicted rating (0-5 scale)
-            predicted_rating = (final_score / 100.0) * 5.0
-            
-            # Confidence based on CF availability
-            confidence = self._calculate_confidence(user_cf_score_normalized, item_cf_score_normalized)
-            
-            recommendations.append({
-                'property_id': property_id,
-                'predicted_rating': round(predicted_rating, 2),
-                'confidence': confidence,
-                'algorithm': 'hybrid',
-                'score_breakdown': {
-                    'user_based': round(user_cf_score, 2),
-                    'item_based': round(item_cf_score, 2),
-                    'content': round(content_score, 2)
-                },
-                'total_score': round(final_score, 2)  # Add total score for logging
-            })
-        
-        # Sort by total score
-        recommendations.sort(key=lambda x: x['total_score'], reverse=True)
-        
-        return recommendations[:limit]
     
     def _get_user_based_score(self, user_id: int, property_id: int) -> float:
         """Get user-based CF score (0-1 normalized)"""
-        if self.user_similarity_matrix is None or user_id not in self.user_item_matrix.index:
-            return 0.5  # Neutral score
-        
-        # Get similar users
-        similar_users = self.find_similar_users(user_id, k=10)
-        
-        if not similar_users:
-            return 0.5
-        
-        # Weighted average of similar users' ratings
-        weighted_sum = 0.0
-        similarity_sum = 0.0
-        
-        for sim_user in similar_users:
-            sim_user_id = sim_user.user_id
-            similarity = sim_user.similarity
+        try:
+            if self.user_similarity_matrix is None or user_id not in self.user_item_matrix.index:
+                return 0.5  # Neutral score
             
-            # Check if similar user rated this property
-            if property_id in self.user_item_matrix.columns:
-                rating = self.user_item_matrix.loc[sim_user_id, property_id]
-                if rating > 0:
-                    weighted_sum += similarity * rating
-                    similarity_sum += similarity
-        
-        if similarity_sum > 0:
-            predicted_rating = weighted_sum / similarity_sum
-            return min(predicted_rating / 5.0, 1.0)  # Normalize to 0-1
-        
-        return 0.5
+            # Get similar users
+            similar_users = self.find_similar_users(user_id, k=10)
+            
+            if not similar_users:
+                return 0.5
+            
+            # Weighted average of similar users' ratings
+            weighted_sum = 0.0
+            similarity_sum = 0.0
+            
+            for sim_user in similar_users:
+                sim_user_id = sim_user.user_id
+                similarity = sim_user.similarity
+                
+                # Check if similar user rated this property
+                if property_id in self.user_item_matrix.columns:
+                    rating = self.user_item_matrix.loc[sim_user_id, property_id]
+                    if rating > 0:
+                        weighted_sum += similarity * rating
+                        similarity_sum += similarity
+            
+            if similarity_sum > 0:
+                predicted_rating = weighted_sum / similarity_sum
+                return min(predicted_rating / 5.0, 1.0)  # Normalize to 0-1
+            
+            return 0.5
+        except Exception as e:
+            logger.error(f"Error in _get_user_based_score: {str(e)}")
+            return 0.5
     
     def _get_item_based_score(self, user_id: int, property_id: int, user_ratings: List[Dict]) -> float:
         """Get item-based CF score (0-1 normalized)"""
-        if self.item_similarity_matrix is None or property_id not in self.item_similarity_matrix.index:
+        try:
+            if self.item_similarity_matrix is None or property_id not in self.item_similarity_matrix.index:
+                return 0.5
+            
+            # Find properties user has rated highly (4+)
+            highly_rated = [r for r in user_ratings if float(r.get('rating', 0)) >= 4.0]
+            
+            if not highly_rated:
+                return 0.5
+            
+            # Calculate similarity to highly rated properties
+            similarities = []
+            for rated_prop in highly_rated:
+                rated_id = rated_prop['property_id']
+                if rated_id in self.item_similarity_matrix.columns:
+                    sim = self.item_similarity_matrix.loc[property_id, rated_id]
+                    similarities.append(sim)
+            
+            if similarities:
+                avg_similarity = np.mean(similarities)
+                return max(0, min(avg_similarity, 1.0))
+            
             return 0.5
-        
-        # Find properties user has rated highly (4+)
-        highly_rated = [r for r in user_ratings if r['rating'] >= 4.0]
-        
-        if not highly_rated:
+        except Exception as e:
+            logger.error(f"Error in _get_item_based_score: {str(e)}")
             return 0.5
-        
-        # Calculate similarity to highly rated properties
-        similarities = []
-        for rated_prop in highly_rated:
-            rated_id = rated_prop['property_id']
-            if rated_id in self.item_similarity_matrix.columns:
-                sim = self.item_similarity_matrix.loc[property_id, rated_id]
-                similarities.append(sim)
-        
-        if similarities:
-            avg_similarity = np.mean(similarities)
-            return max(0, min(avg_similarity, 1.0))
-        
-        return 0.5
     
     def _calculate_confidence(self, user_cf_score: float, item_cf_score: float) -> str:
         """Calculate confidence level"""
