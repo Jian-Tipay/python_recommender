@@ -54,9 +54,8 @@ class Database:
         except Exception as e:
             print(f"Query error: {e}")
             raise
-    
+
     def get_all_ratings(self):
-        """Get all ratings from database"""
         query = """
             SELECT 
                 rating_id,
@@ -68,9 +67,8 @@ class Database:
             ORDER BY created_at DESC
         """
         return self.execute_query(query)
-    
+
     def get_user_ratings(self, user_id):
-        """Get all ratings by a specific user"""
         query = """
             SELECT 
                 rating_id,
@@ -83,9 +81,8 @@ class Database:
             ORDER BY created_at DESC
         """
         return self.execute_query(query, (user_id,))
-    
+
     def get_property_ratings(self, property_id):
-        """Get all ratings for a specific property"""
         query = """
             SELECT 
                 rating_id,
@@ -98,9 +95,8 @@ class Database:
             ORDER BY created_at DESC
         """
         return self.execute_query(query, (property_id,))
-    
+
     def get_user_rated_properties(self, user_id):
-        """Get list of property IDs rated by user"""
         query = """
             SELECT DISTINCT property_id
             FROM ratings
@@ -108,9 +104,8 @@ class Database:
         """
         results = self.execute_query(query, (user_id,))
         return [r['property_id'] for r in results]
-    
+
     def get_active_properties(self, exclude_ids=None):
-        """Get all active properties"""
         query = """
             SELECT 
                 id,
@@ -122,16 +117,15 @@ class Database:
             FROM properties
             WHERE is_active = 1
         """
-        
+
         if exclude_ids:
-            placeholders = ','.join(['%s'] * len(exclude_ids))
+            placeholders = ",".join(["%s"] * len(exclude_ids))
             query += f" AND id NOT IN ({placeholders})"
             return self.execute_query(query, tuple(exclude_ids))
-        
+
         return self.execute_query(query)
-    
+
     def get_property_details(self, property_id):
-        """Get detailed information about a property"""
         query = """
             SELECT 
                 id,
@@ -147,9 +141,8 @@ class Database:
             WHERE id = %s
         """
         return self.execute_single(query, (property_id,))
-    
+
     def get_user_preferences(self, user_id):
-        """Get user preferences"""
         query = """
             SELECT 
                 preference_id,
@@ -163,9 +156,8 @@ class Database:
             WHERE user_id = %s
         """
         return self.execute_single(query, (user_id,))
-    
+
     def get_property_amenities(self, property_id):
-        """Get amenities for a property"""
         query = """
             SELECT a.amenity_id, a.amenity_name
             FROM property_amenities pa
@@ -173,9 +165,8 @@ class Database:
             WHERE pa.property_id = %s
         """
         return self.execute_query(query, (property_id,))
-    
+
     def get_rating_statistics(self):
-        """Get rating statistics for the system"""
         query = """
             SELECT 
                 COUNT(DISTINCT user_id) as total_users,
@@ -187,8 +178,8 @@ class Database:
             FROM ratings
         """
         return self.execute_single(query)
-        
-     def test_connection(self):
+
+    def test_connection(self):
         """Simple health check for database connection"""
         try:
             conn = self.connect()
@@ -200,6 +191,4 @@ class Database:
             return False
 
     def __del__(self):
-        """Cleanup connection on object destruction"""
         self.disconnect()
-
