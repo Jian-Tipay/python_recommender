@@ -1,5 +1,3 @@
-
-
 import numpy as np
 import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
@@ -46,17 +44,19 @@ class EnhancedCollaborativeFilteringEngine:
     1. User-Based CF (40%) - Similar students' preferences
     2. Item-Based CF (30%) - Similar properties
     3. Content-Based with Research Weights (30%) - Property features
+    
+    All scores are on 0-100 scale to match database storage
     """
     
     # Research-based weights (total = 100%)
     WEIGHTS = {
-        'distance': 0.30,      # Proximity to campus (30%)
-        'cost': 0.25,          # Affordability (25%)
-        'safety': 0.15,        # Safety & security (15%)
-        'facilities': 0.10,    # Facilities & amenities (10%)
-        'room_type': 0.10,     # Room type & privacy (10%)
-        'management': 0.05,    # Management quality (5%)
-        'social': 0.05         # Social environment (5%)
+        'distance': 30.0,      # Proximity to campus (30 points)
+        'cost': 25.0,          # Affordability (25 points)
+        'safety': 15.0,        # Safety & security (15 points)
+        'facilities': 10.0,    # Facilities & amenities (10 points)
+        'room_type': 10.0,     # Room type & privacy (10 points)
+        'management': 5.0,     # Management quality (5 points)
+        'social': 5.0          # Social environment (5 points)
     }
     
     def __init__(self, database):
@@ -65,7 +65,7 @@ class EnhancedCollaborativeFilteringEngine:
         self.user_similarity_matrix = None
         self.item_similarity_matrix = None
         self.cache = {}
-        logger.info("Enhanced CF Engine initialized with research-based weights")
+        logger.info("Enhanced CF Engine initialized with research-based weights (0-100 scale)")
     
     def _build_user_item_matrix(self):
         """Build user-item rating matrix"""
@@ -128,11 +128,11 @@ class EnhancedCollaborativeFilteringEngine:
         """
         Calculate content-based score using research-based weights
         
-        Returns normalized score 0-1
+        Returns score on 0-100 scale
         """
         score = 0.0
         
-        # 1. DISTANCE/PROXIMITY (30%)
+        # 1. DISTANCE/PROXIMITY (30 points)
         distance = property_data.get('distance_from_campus', 999)
         preferred_distance = user_preference.get('preferred_distance', 2.0)
         
@@ -145,7 +145,7 @@ class EnhancedCollaborativeFilteringEngine:
         
         score += distance_score * self.WEIGHTS['distance']
         
-        # 2. COST/AFFORDABILITY (25%)
+        # 2. COST/AFFORDABILITY (25 points)
         price = property_data.get('price', 0)
         budget_min = user_preference.get('budget_min', 0)
         budget_max = user_preference.get('budget_max', 999999)
@@ -160,13 +160,13 @@ class EnhancedCollaborativeFilteringEngine:
         
         score += cost_score * self.WEIGHTS['cost']
         
-        # 3. SAFETY & SECURITY (15%)
+        # 3. SAFETY & SECURITY (15 points)
         # Proxy: average rating (higher ratings suggest safer/better managed)
         avg_rating = property_data.get('avg_rating', 3.0)
         safety_score = min(avg_rating / 5.0, 1.0)
         score += safety_score * self.WEIGHTS['safety']
         
-        # 4. FACILITIES & AMENITIES (10%)
+        # 4. FACILITIES & AMENITIES (10 points)
         user_amenities = set(user_preference.get('preferred_amenities', []))
         property_amenities = set(property_data.get('amenities', []))
         
@@ -177,7 +177,7 @@ class EnhancedCollaborativeFilteringEngine:
         
         score += amenity_match * self.WEIGHTS['facilities']
         
-        # 5. ROOM TYPE/PRIVACY (10%)
+        # 5. ROOM TYPE/PRIVACY (10 points)
         user_room_type = user_preference.get('room_type', 'Any')
         property_room_type = property_data.get('room_type', 'Any')
         
@@ -190,13 +190,13 @@ class EnhancedCollaborativeFilteringEngine:
         
         score += room_score * self.WEIGHTS['room_type']
         
-        # 6. MANAGEMENT & MAINTENANCE (5%)
+        # 6. MANAGEMENT & MAINTENANCE (5 points)
         # Proxy: rating count (more ratings = more established)
         rating_count = property_data.get('rating_count', 0)
         management_score = min(rating_count / 20.0, 1.0)
         score += management_score * self.WEIGHTS['management']
         
-        # 7. SOCIAL & ENVIRONMENTAL (5%)
+        # 7. SOCIAL & ENVIRONMENTAL (5 points)
         user_gender_pref = user_preference.get('gender_preference', 'Any')
         property_gender = property_data.get('gender_restriction', 'Any')
         
@@ -209,7 +209,7 @@ class EnhancedCollaborativeFilteringEngine:
         
         score += social_score * self.WEIGHTS['social']
         
-        return score
+        return round(score, 2)  # Return 0-100 score
     
     def get_hybrid_recommendations(self, user_id: int, limit: int = 10) -> List[Dict]:
         """
@@ -219,6 +219,8 @@ class EnhancedCollaborativeFilteringEngine:
         - User-Based CF: 40%
         - Item-Based CF: 30%
         - Content-Based: 30%
+        
+        Returns scores on 0-100 scale
         """
         self._ensure_matrices()
         
@@ -243,27 +245,26 @@ class EnhancedCollaborativeFilteringEngine:
         for property_data in candidate_properties:
             property_id = property_data['id']
             
-            # 1. USER-BASED CF SCORE (40%)
-            user_cf_score = self._get_user_based_score(user_id, property_id)
+            # 1. USER-BASED CF SCORE (40 points max)
+            user_cf_score_normalized = self._get_user_based_score(user_id, property_id)
+            user_cf_score = user_cf_score_normalized * 40.0
             
-            # 2. ITEM-BASED CF SCORE (30%)
-            item_cf_score = self._get_item_based_score(user_id, property_id, user_ratings)
+            # 2. ITEM-BASED CF SCORE (30 points max)
+            item_cf_score_normalized = self._get_item_based_score(user_id, property_id, user_ratings)
+            item_cf_score = item_cf_score_normalized * 30.0
             
-            # 3. CONTENT-BASED SCORE (30%)
-            content_score = self._calculate_content_score(property_data, user_preference)
+            # 3. CONTENT-BASED SCORE (30 points max)
+            content_score_full = self._calculate_content_score(property_data, user_preference)
+            content_score = (content_score_full / 100.0) * 30.0
             
-            # WEIGHTED COMBINATION
-            final_score = (
-                user_cf_score * 0.40 +
-                item_cf_score * 0.30 +
-                content_score * 0.30
-            )
+            # WEIGHTED COMBINATION (0-100 scale)
+            final_score = user_cf_score + item_cf_score + content_score
             
             # Convert to predicted rating (0-5 scale)
-            predicted_rating = final_score * 5.0
+            predicted_rating = (final_score / 100.0) * 5.0
             
             # Confidence based on CF availability
-            confidence = self._calculate_confidence(user_cf_score, item_cf_score)
+            confidence = self._calculate_confidence(user_cf_score_normalized, item_cf_score_normalized)
             
             recommendations.append({
                 'property_id': property_id,
@@ -271,19 +272,20 @@ class EnhancedCollaborativeFilteringEngine:
                 'confidence': confidence,
                 'algorithm': 'hybrid',
                 'score_breakdown': {
-                    'user_based': round(user_cf_score, 3),
-                    'item_based': round(item_cf_score, 3),
-                    'content': round(content_score, 3)
-                }
+                    'user_based': round(user_cf_score, 2),
+                    'item_based': round(item_cf_score, 2),
+                    'content': round(content_score, 2)
+                },
+                'total_score': round(final_score, 2)  # Add total score for logging
             })
         
-        # Sort by predicted rating
-        recommendations.sort(key=lambda x: x['predicted_rating'], reverse=True)
+        # Sort by total score
+        recommendations.sort(key=lambda x: x['total_score'], reverse=True)
         
         return recommendations[:limit]
     
     def _get_user_based_score(self, user_id: int, property_id: int) -> float:
-        """Get user-based CF score (0-1)"""
+        """Get user-based CF score (0-1 normalized)"""
         if self.user_similarity_matrix is None or user_id not in self.user_item_matrix.index:
             return 0.5  # Neutral score
         
@@ -315,7 +317,7 @@ class EnhancedCollaborativeFilteringEngine:
         return 0.5
     
     def _get_item_based_score(self, user_id: int, property_id: int, user_ratings: List[Dict]) -> float:
-        """Get item-based CF score (0-1)"""
+        """Get item-based CF score (0-1 normalized)"""
         if self.item_similarity_matrix is None or property_id not in self.item_similarity_matrix.index:
             return 0.5
         
@@ -431,7 +433,8 @@ class EnhancedCollaborativeFilteringEngine:
                 recommendations.append({
                     'property_id': prop_id,
                     'predicted_rating': round(predicted_rating, 2),
-                    'confidence': 'medium'
+                    'confidence': 'medium',
+                    'total_score': round((predicted_rating / 5.0) * 100, 2)
                 })
         
         recommendations.sort(key=lambda x: x['predicted_rating'], reverse=True)
@@ -464,10 +467,12 @@ class EnhancedCollaborativeFilteringEngine:
         
         recommendations = []
         for prop_id, score in property_scores.items():
+            predicted_rating = min(score, 5.0)
             recommendations.append({
                 'property_id': prop_id,
-                'predicted_rating': round(min(score, 5.0), 2),
-                'confidence': 'medium'
+                'predicted_rating': round(predicted_rating, 2),
+                'confidence': 'medium',
+                'total_score': round((predicted_rating / 5.0) * 100, 2)
             })
         
         recommendations.sort(key=lambda x: x['predicted_rating'], reverse=True)
