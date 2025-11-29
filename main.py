@@ -6,19 +6,22 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
-# Now we can import everything
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 import uvicorn
 
-# Import the ENHANCED CF algorithm
-from cf_algo_enhanced import EnhancedCollaborativeFilteringEngine
+# Import the ENHANCED CF algorithm with research-based weights
+from cf_algo_enhanced_weights import EnhancedCollaborativeFilteringEngine
 import db
 
 # Create FastAPI app
-app = FastAPI(title="Boarding House Recommendation System")
+app = FastAPI(
+    title="Boarding House Recommendation System",
+    description="Hybrid CF with Research-Based Content Weights (Yaacob et al., 2023; Cervelló-Royo et al., 2021)",
+    version="2.0.0"
+)
 
 # CORS middleware
 app.add_middleware(
@@ -32,9 +35,17 @@ app.add_middleware(
 # Initialize database and ENHANCED CF engine
 print("Initializing database connection...")
 database = db.Database()
-print("Initializing ENHANCED CF engine with content features...")
+print("Initializing ENHANCED CF engine with research-based weights...")
 cf_engine = EnhancedCollaborativeFilteringEngine(database)
-print("✓ Service initialized successfully with hybrid CF + content features!")
+print("✓ Service initialized successfully!")
+print("\nResearch-Based Weights:")
+print("  - Distance/Proximity: 30%")
+print("  - Cost/Affordability: 25%")
+print("  - Safety & Security: 15%")
+print("  - Facilities & Amenities: 10%")
+print("  - Room Type/Privacy: 10%")
+print("  - Management & Maintenance: 5%")
+print("  - Social & Environmental: 5%")
 
 
 class RecommendationRequest(BaseModel):
@@ -63,7 +74,14 @@ def read_root():
     return {
         "status": "online",
         "service": "Boarding House Recommendation System",
-        "version": "1.0.0"
+        "version": "2.0.0",
+        "algorithm": "Hybrid CF + Research-Based Content Weights",
+        "weights": cf_engine.WEIGHTS,
+        "references": [
+            "Yaacob et al. (2023) - Student housing preferences",
+            "Cervelló-Royo et al. (2021) - Multi-criteria housing analysis",
+            "Akinjare et al. (2025) - Student satisfaction determinants"
+        ]
     }
 
 
@@ -75,7 +93,8 @@ def health_check():
         return {
             "status": "healthy",
             "database": "connected",
-            "service": "running"
+            "service": "running",
+            "algorithm": "hybrid_cf_with_research_weights"
         }
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Service unhealthy: {str(e)}")
@@ -85,7 +104,16 @@ def health_check():
 def get_recommendations(user_id: int, limit: int = 10):
     """
     Get personalized property recommendations for a user
-    Uses hybrid approach: User-based CF + Item-based CF + Content filtering
+    
+    Uses hybrid approach with research-based weights:
+    - User-based CF (40%): Similar students' preferences
+    - Item-based CF (30%): Similar properties
+    - Content-based (30%): Research-weighted features
+    
+    Content weights based on:
+    - Distance (30%), Cost (25%), Safety (15%)
+    - Facilities (10%), Room Type (10%)
+    - Management (5%), Social (5%)
     """
     try:
         recommendations = cf_engine.get_hybrid_recommendations(user_id, limit)
@@ -100,8 +128,14 @@ def get_recommendations(user_id: int, limit: int = 10):
         
         return {
             "recommendations": recommendations,
-            "algorithm_used": "hybrid",
-            "total_results": len(recommendations)
+            "algorithm_used": "hybrid_cf_with_research_weights",
+            "total_results": len(recommendations),
+            "weights_info": {
+                "user_based_cf": "40%",
+                "item_based_cf": "30%",
+                "content_based": "30%",
+                "content_breakdown": cf_engine.WEIGHTS
+            }
         }
     
     except Exception as e:
@@ -116,7 +150,7 @@ def get_collaborative_recommendations(user_id: int, limit: int = 10):
         
         return {
             "recommendations": recommendations,
-            "algorithm_used": "user_based_cf",
+            "algorithm_used": "user_based_cf_only",
             "total_results": len(recommendations)
         }
     
@@ -132,7 +166,7 @@ def get_item_based_recommendations(user_id: int, limit: int = 10):
         
         return {
             "recommendations": recommendations,
-            "algorithm_used": "item_based_cf",
+            "algorithm_used": "item_based_cf_only",
             "total_results": len(recommendations)
         }
     
@@ -142,7 +176,7 @@ def get_item_based_recommendations(user_id: int, limit: int = 10):
 
 @app.post("/predict-rating")
 def predict_rating(request: PredictionRequest):
-    """Predict rating for a user-property pair"""
+    """Predict rating for a user-property pair using hybrid algorithm"""
     try:
         prediction = cf_engine.predict_rating(request.user_id, request.property_id)
         
@@ -152,7 +186,8 @@ def predict_rating(request: PredictionRequest):
         
         return {
             "predicted_rating": round(prediction, 2),
-            "confidence": confidence
+            "confidence": confidence,
+            "algorithm": "hybrid_cf_with_research_weights"
         }
     
     except Exception as e:
@@ -198,21 +233,67 @@ def retrain_model():
         cf_engine.clear_cache()
         return {
             "status": "success",
-            "message": "Model cache cleared, will retrain on next request"
+            "message": "Model cache cleared, will retrain on next request",
+            "algorithm": "hybrid_cf_with_research_weights"
         }
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
 
+@app.get("/weights")
+def get_weights():
+    """Get current research-based weights"""
+    return {
+        "content_weights": cf_engine.WEIGHTS,
+        "algorithm_weights": {
+            "user_based_cf": 0.40,
+            "item_based_cf": 0.30,
+            "content_based": 0.30
+        },
+        "references": [
+            {
+                "weight": "distance (30%)",
+                "source": "Yaacob et al. (2023), Cervelló-Royo et al. (2021)"
+            },
+            {
+                "weight": "cost (25%)",
+                "source": "Yaacob et al. (2023), Cervelló-Royo et al. (2021)"
+            },
+            {
+                "weight": "safety (15%)",
+                "source": "Akinjare et al. (2025)"
+            },
+            {
+                "weight": "facilities (10%)",
+                "source": "Mohit et al. (2010)"
+            },
+            {
+                "weight": "room_type (10%)",
+                "source": "Mohit et al. (2010)"
+            },
+            {
+                "weight": "management (5%)",
+                "source": "Mohd Isa & Ismail (2014)"
+            },
+            {
+                "weight": "social (5%)",
+                "source": "Mohd Isa & Ismail (2014)"
+            }
+        ]
+    }
+
+
 if __name__ == "__main__":
-    print("\n" + "="*60)
-    print("  Starting Boarding House CF Recommendation Service")
-    print("="*60)
+    print("\n" + "="*70)
+    print("  Starting Boarding House Recommendation Service")
+    print("  Version 2.0 - Research-Based Hybrid CF")
+    print("="*70)
     print(f"  Server: http://127.0.0.1:8001")
     print(f"  Docs: http://127.0.0.1:8001/docs")
+    print(f"  Weights: http://127.0.0.1:8001/weights")
     print("  Press CTRL+C to stop")
-    print("="*60 + "\n")
+    print("="*70 + "\n")
     
     uvicorn.run(
         app,
