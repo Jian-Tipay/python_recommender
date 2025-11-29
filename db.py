@@ -15,7 +15,7 @@ class Database:
 
     def connect(self):
         try:
-            if self.connection is None:
+            if self.connection is None or not self.connection.open:
                 self.connection = pymysql.connect(
                     host=self.host,
                     user=self.user,
@@ -34,6 +34,18 @@ class Database:
         if self.connection:
             self.connection.close()
             self.connection = None
+
+    def test_connection(self):
+        """Test database connection"""
+        try:
+            conn = self.connect()
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT 1")
+                result = cursor.fetchone()
+                return result is not None
+        except Exception as e:
+            print(f"Connection test failed: {e}")
+            raise
 
     def execute_query(self, query, params=None):
         try:
