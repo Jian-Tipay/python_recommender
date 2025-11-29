@@ -1,70 +1,91 @@
-import pymysql
+import mysql.connector
+from mysql.connector import Error
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
+
 class Database:
     def __init__(self):
-        self.host = os.getenv("DB_HOST")
-        self.database = os.getenv("DB_DATABASE")
-        self.user = os.getenv("DB_USERNAME")
-        self.password = os.getenv("DB_PASSWORD")
-        self.port = int(os.getenv("DB_PORT", "3306"))
+        self.host = os.getenv('DB_HOST', 'localhost')
+        self.database = os.getenv('DB_DATABASE', 'slsu_boarding_house')
+        self.user = os.getenv('DB_USERNAME', 'root')
+        self.password = os.getenv('DB_PASSWORD', 'root')
         self.connection = None
-
+    
     def connect(self):
+        """Create database connection"""
         try:
-            if self.connection is None or not self.connection.open:
-                self.connection = pymysql.connect(
+            if self.connection is None or not self.connection.is_connected():
+                self.connection = mysql.connector.connect(
                     host=self.host,
+                    database=self.database,
                     user=self.user,
                     password=self.password,
-                    database=self.database,
-                    port=self.port,
-                    charset="utf8mb4",
-                    cursorclass=pymysql.cursors.DictCursor
+                    charset='utf8mb4',
+                    collation='utf8mb4_unicode_ci'
                 )
             return self.connection
-        except Exception as e:
+        except Error as e:
             print(f"Error connecting to MySQL: {e}")
             raise
-
+    
     def disconnect(self):
-        if self.connection:
+        """Close database connection"""
+        if self.connection and self.connection.is_connected():
             self.connection.close()
             self.connection = None
-
+    
     def test_connection(self):
-        """Test database connection"""
+        """Test if database connection works"""
         try:
             conn = self.connect()
-            with conn.cursor() as cursor:
-                cursor.execute("SELECT 1")
-                result = cursor.fetchone()
-                return result is not None
-        except Exception as e:
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+            cursor.close()
+            return True
+        except Error as e:
             print(f"Connection test failed: {e}")
             raise
-
+    
     def execute_query(self, query, params=None):
+        """Execute a SELECT query and return results"""
         try:
             conn = self.connect()
-            with conn.cursor() as cursor:
+            cursor = conn.cursor(dictionary=True)
+            
+            if params:
                 cursor.execute(query, params)
-                return cursor.fetchall()
-        except Exception as e:
-            print(f"Query error: {e}")
+            else:
+                cursor.execute(query)
+            
+            results = cursor.fetchall()
+            cursor.close()
+            
+            return results
+        except Error as e:
+            print(f"Query execution error: {e}")
             raise
-
+    
     def execute_single(self, query, params=None):
+        """Execute a SELECT query and return single result"""
         try:
             conn = self.connect()
-            with conn.cursor() as cursor:
+            cursor = conn.cursor(dictionary=True)
+            
+            if params:
                 cursor.execute(query, params)
-                return cursor.fetchone()
-        except Exception as e:
-            print(f"Query error: {e}")
+            else:
+                cursor.execute(query)
+            
+            result = cursor.fetchone()
+            cursor.close()
+            
+            return result
+        except Error as e:
+            print(f"Query execution error: {e}")
             raise
     
     def get_all_ratings(self):
