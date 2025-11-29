@@ -213,7 +213,7 @@ class EnhancedCollaborativeFilteringEngine:
             
             # 7. SOCIAL & ENVIRONMENTAL (5 points)
             user_gender_pref = str(user_preference.get('gender_preference', 'Any'))
-            property_gender = str(property_data.get('gender_restriction', 'Any'))
+            property_gender = str(property_data.get('gender_preference', 'Any'))
             
             if user_gender_pref == 'Any' or property_gender == 'Any':
                 social_score = 0.8
@@ -539,3 +539,4 @@ class EnhancedCollaborativeFilteringEngine:
         self.item_similarity_matrix = None
         self.cache = {}
         logger.info("Cache cleared")
+
