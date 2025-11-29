@@ -1,484 +1,494 @@
-import numpy as np
-from typing import List, Dict, Tuple, Optional
-from collections import defaultdict
-import math
 
-import models
+
+import numpy as np
+import pandas as pd
+from sklearn.metrics.pairwise import cosine_similarity
+from typing import List, Dict, Tuple
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+class SimilarUser:
+    def __init__(self, user_id: int, similarity: float, common_ratings: int):
+        self.user_id = user_id
+        self.similarity = similarity
+        self.common_ratings = common_ratings
+    
+    def to_dict(self):
+        return {
+            'user_id': self.user_id,
+            'similarity': round(self.similarity, 4),
+            'common_ratings': self.common_ratings
+        }
+
+
+class SimilarProperty:
+    def __init__(self, property_id: int, similarity: float, common_users: int):
+        self.property_id = property_id
+        self.similarity = similarity
+        self.common_users = common_users
+    
+    def to_dict(self):
+        return {
+            'property_id': self.property_id,
+            'similarity': round(self.similarity, 4),
+            'common_users': self.common_users
+        }
 
 
 class EnhancedCollaborativeFilteringEngine:
     """
-    Enhanced CF Engine that combines:
-    1. User-Based CF (similar users)
-    2. Item-Based CF (similar properties) 
-    3. Content Features (amenities of highly-rated properties)
+    Hybrid CF Engine with Research-Based Content Features
+    
+    Combines:
+    1. User-Based CF (40%) - Similar students' preferences
+    2. Item-Based CF (30%) - Similar properties
+    3. Content-Based with Research Weights (30%) - Property features
     """
     
-    def __init__(self, db, min_common_ratings=2, k_neighbors=10):
-        self.db = db
-        self.min_common_ratings = min_common_ratings
-        self.k_neighbors = k_neighbors
-        self.rating_matrix = None
-        self.user_means = {}
-        self.global_mean = 3.5
+    # Research-based weights (total = 100%)
+    WEIGHTS = {
+        'distance': 0.30,      # Proximity to campus (30%)
+        'cost': 0.25,          # Affordability (25%)
+        'safety': 0.15,        # Safety & security (15%)
+        'facilities': 0.10,    # Facilities & amenities (10%)
+        'room_type': 0.10,     # Room type & privacy (10%)
+        'management': 0.05,    # Management quality (5%)
+        'social': 0.05         # Social environment (5%)
+    }
+    
+    def __init__(self, database):
+        self.db = database
+        self.user_item_matrix = None
+        self.user_similarity_matrix = None
+        self.item_similarity_matrix = None
+        self.cache = {}
+        logger.info("Enhanced CF Engine initialized with research-based weights")
+    
+    def _build_user_item_matrix(self):
+        """Build user-item rating matrix"""
+        ratings_df = pd.DataFrame(self.db.get_all_ratings())
         
-    def _build_rating_matrix(self):
-        """Build user-item rating matrix from database"""
-        ratings_data = self.db.get_all_ratings()
+        if ratings_df.empty:
+            return pd.DataFrame()
         
-        if not ratings_data:
-            return models.RatingMatrix(users=[], properties=[], ratings={})
-        
-        users = set()
-        properties = set()
-        ratings = {}
-        rating_sum = 0
-        rating_count = 0
-        
-        for r in ratings_data:
-            user_id = r['user_id']
-            property_id = r['property_id']
-            rating = float(r['rating'])
-            
-            users.add(user_id)
-            properties.add(property_id)
-            ratings[(user_id, property_id)] = rating
-            rating_sum += rating
-            rating_count += 1
-        
-        self.global_mean = rating_sum / rating_count if rating_count > 0 else 3.5
-        
-        for user_id in users:
-            user_ratings = [r for (u, p), r in ratings.items() if u == user_id]
-            self.user_means[user_id] = np.mean(user_ratings) if user_ratings else self.global_mean
-        
-        return models.RatingMatrix(
-            users=list(users),
-            properties=list(properties),
-            ratings=ratings
+        matrix = ratings_df.pivot_table(
+            index='user_id',
+            columns='property_id',
+            values='rating',
+            fill_value=0
         )
+        
+        return matrix
     
-    def _get_rating_matrix(self) -> models.RatingMatrix:
-        """Get or build rating matrix (with caching)"""
-        if self.rating_matrix is None:
-            self.rating_matrix = self._build_rating_matrix()
-        return self.rating_matrix
+    def _calculate_user_similarity(self):
+        """Calculate user-user similarity using cosine similarity"""
+        if self.user_item_matrix is None or self.user_item_matrix.empty:
+            return None
+        
+        # Cosine similarity between users
+        user_sim = cosine_similarity(self.user_item_matrix)
+        user_sim_df = pd.DataFrame(
+            user_sim,
+            index=self.user_item_matrix.index,
+            columns=self.user_item_matrix.index
+        )
+        
+        return user_sim_df
     
-    def _pearson_correlation(self, ratings1: dict, ratings2: dict) -> float:
-        """Calculate Pearson correlation coefficient"""
-        common_items = set(ratings1.keys()) & set(ratings2.keys())
+    def _calculate_item_similarity(self):
+        """Calculate item-item similarity"""
+        if self.user_item_matrix is None or self.user_item_matrix.empty:
+            return None
         
-        if len(common_items) < self.min_common_ratings:
-            return 0.0
+        # Transpose and calculate similarity between properties
+        item_sim = cosine_similarity(self.user_item_matrix.T)
+        item_sim_df = pd.DataFrame(
+            item_sim,
+            index=self.user_item_matrix.columns,
+            columns=self.user_item_matrix.columns
+        )
         
-        ratings1_common = [ratings1[item] for item in common_items]
-        ratings2_common = [ratings2[item] for item in common_items]
-        
-        mean1 = np.mean(ratings1_common)
-        mean2 = np.mean(ratings2_common)
-        
-        numerator = sum((r1 - mean1) * (r2 - mean2) 
-                       for r1, r2 in zip(ratings1_common, ratings2_common))
-        
-        denominator1 = math.sqrt(sum((r1 - mean1) ** 2 for r1 in ratings1_common))
-        denominator2 = math.sqrt(sum((r2 - mean2) ** 2 for r2 in ratings2_common))
-        
-        if denominator1 == 0 or denominator2 == 0:
-            return 0.0
-        
-        correlation = numerator / (denominator1 * denominator2)
-        return max(-1.0, min(1.0, correlation))
+        return item_sim_df
     
-    def _cosine_similarity(self, ratings1: dict, ratings2: dict) -> float:
-        """Calculate cosine similarity"""
-        common_items = set(ratings1.keys()) & set(ratings2.keys())
+    def _ensure_matrices(self):
+        """Ensure similarity matrices are calculated"""
+        if self.user_item_matrix is None:
+            self.user_item_matrix = self._build_user_item_matrix()
         
-        if len(common_items) < self.min_common_ratings:
-            return 0.0
+        if self.user_similarity_matrix is None and not self.user_item_matrix.empty:
+            self.user_similarity_matrix = self._calculate_user_similarity()
         
-        vec1 = [ratings1[item] for item in common_items]
-        vec2 = [ratings2[item] for item in common_items]
-        
-        dot_product = sum(v1 * v2 for v1, v2 in zip(vec1, vec2))
-        magnitude1 = math.sqrt(sum(v ** 2 for v in vec1))
-        magnitude2 = math.sqrt(sum(v ** 2 for v in vec2))
-        
-        if magnitude1 == 0 or magnitude2 == 0:
-            return 0.0
-        
-        return dot_product / (magnitude1 * magnitude2)
+        if self.item_similarity_matrix is None and not self.user_item_matrix.empty:
+            self.item_similarity_matrix = self._calculate_item_similarity()
     
-    def find_similar_users(self, user_id: int, k: int = None) -> List[models.SimilarUser]:
-        """Find k most similar users based on rating patterns"""
-        if k is None:
-            k = self.k_neighbors
+    def _calculate_content_score(self, property_data: Dict, user_preference: Dict) -> float:
+        """
+        Calculate content-based score using research-based weights
         
-        matrix = self._get_rating_matrix()
+        Returns normalized score 0-1
+        """
+        score = 0.0
         
-        if not matrix.has_user(user_id):
+        # 1. DISTANCE/PROXIMITY (30%)
+        distance = property_data.get('distance_from_campus', 999)
+        preferred_distance = user_preference.get('preferred_distance', 2.0)
+        
+        if distance <= preferred_distance:
+            distance_score = 1.0
+        elif distance <= preferred_distance * 1.5:
+            distance_score = 0.6
+        else:
+            distance_score = max(0, 1.0 - (distance - preferred_distance) / 5.0)
+        
+        score += distance_score * self.WEIGHTS['distance']
+        
+        # 2. COST/AFFORDABILITY (25%)
+        price = property_data.get('price', 0)
+        budget_min = user_preference.get('budget_min', 0)
+        budget_max = user_preference.get('budget_max', 999999)
+        
+        if budget_min <= price <= budget_max:
+            cost_score = 1.0
+        elif price < budget_min:
+            cost_score = 0.7  # Below budget is still acceptable
+        else:
+            # Above budget - penalize
+            cost_score = max(0, 1.0 - (price - budget_max) / budget_max)
+        
+        score += cost_score * self.WEIGHTS['cost']
+        
+        # 3. SAFETY & SECURITY (15%)
+        # Proxy: average rating (higher ratings suggest safer/better managed)
+        avg_rating = property_data.get('avg_rating', 3.0)
+        safety_score = min(avg_rating / 5.0, 1.0)
+        score += safety_score * self.WEIGHTS['safety']
+        
+        # 4. FACILITIES & AMENITIES (10%)
+        user_amenities = set(user_preference.get('preferred_amenities', []))
+        property_amenities = set(property_data.get('amenities', []))
+        
+        if user_amenities:
+            amenity_match = len(user_amenities & property_amenities) / len(user_amenities)
+        else:
+            amenity_match = 0.5  # Neutral if no preference
+        
+        score += amenity_match * self.WEIGHTS['facilities']
+        
+        # 5. ROOM TYPE/PRIVACY (10%)
+        user_room_type = user_preference.get('room_type', 'Any')
+        property_room_type = property_data.get('room_type', 'Any')
+        
+        if user_room_type == 'Any' or property_room_type == 'Any':
+            room_score = 0.8
+        elif user_room_type == property_room_type:
+            room_score = 1.0
+        else:
+            room_score = 0.4
+        
+        score += room_score * self.WEIGHTS['room_type']
+        
+        # 6. MANAGEMENT & MAINTENANCE (5%)
+        # Proxy: rating count (more ratings = more established)
+        rating_count = property_data.get('rating_count', 0)
+        management_score = min(rating_count / 20.0, 1.0)
+        score += management_score * self.WEIGHTS['management']
+        
+        # 7. SOCIAL & ENVIRONMENTAL (5%)
+        user_gender_pref = user_preference.get('gender_preference', 'Any')
+        property_gender = property_data.get('gender_restriction', 'Any')
+        
+        if user_gender_pref == 'Any' or property_gender == 'Any':
+            social_score = 0.8
+        elif user_gender_pref == property_gender:
+            social_score = 1.0
+        else:
+            social_score = 0.3
+        
+        score += social_score * self.WEIGHTS['social']
+        
+        return score
+    
+    def get_hybrid_recommendations(self, user_id: int, limit: int = 10) -> List[Dict]:
+        """
+        Get hybrid recommendations combining CF and content-based
+        
+        Weights:
+        - User-Based CF: 40%
+        - Item-Based CF: 30%
+        - Content-Based: 30%
+        """
+        self._ensure_matrices()
+        
+        # Get user ratings
+        user_ratings = self.db.get_user_ratings(user_id)
+        rated_property_ids = [r['property_id'] for r in user_ratings]
+        
+        # Get all properties
+        all_properties = self.db.get_all_properties()
+        candidate_properties = [p for p in all_properties if p['id'] not in rated_property_ids]
+        
+        if not candidate_properties:
             return []
         
-        user_ratings = matrix.get_user_ratings(user_id)
+        # Get user preference
+        user_preference = self.db.get_user_preference(user_id)
+        if not user_preference:
+            user_preference = {}
         
-        if not user_ratings:
-            return []
+        recommendations = []
         
-        similarities = []
-        
-        for other_user_id in matrix.users:
-            if other_user_id == user_id:
-                continue
-            
-            other_ratings = matrix.get_user_ratings(other_user_id)
-            
-            if not other_ratings:
-                continue
-            
-            similarity = self._pearson_correlation(user_ratings, other_ratings)
-            
-            if similarity > 0:
-                common_items = set(user_ratings.keys()) & set(other_ratings.keys())
-                similarities.append(models.SimilarUser(
-                    user_id=other_user_id,
-                    similarity=similarity,
-                    common_ratings=len(common_items)
-                ))
-        
-        similarities.sort(key=lambda x: x.similarity, reverse=True)
-        return similarities[:k]
-    
-    def find_similar_properties(self, property_id: int, k: int = None) -> List[models.SimilarProperty]:
-        """Find k most similar properties based on user ratings"""
-        if k is None:
-            k = self.k_neighbors
-        
-        matrix = self._get_rating_matrix()
-        
-        if not matrix.has_property(property_id):
-            return []
-        
-        property_ratings = matrix.get_property_ratings(property_id)
-        
-        if not property_ratings:
-            return []
-        
-        similarities = []
-        
-        for other_property_id in matrix.properties:
-            if other_property_id == property_id:
-                continue
-            
-            other_ratings = matrix.get_property_ratings(other_property_id)
-            
-            if not other_ratings:
-                continue
-            
-            similarity = self._cosine_similarity(property_ratings, other_ratings)
-            
-            if similarity > 0:
-                common_users = set(property_ratings.keys()) & set(other_ratings.keys())
-                similarities.append(models.SimilarProperty(
-                    property_id=other_property_id,
-                    similarity=similarity,
-                    common_users=len(common_users)
-                ))
-        
-        similarities.sort(key=lambda x: x.similarity, reverse=True)
-        return similarities[:k]
-    
-    def _get_user_liked_amenities(self, user_id: int, min_rating: float = 3.5) -> Dict[int, float]:
-        """
-        Get amenities from properties user rated highly (3.5+ stars)
-        Returns: {amenity_id: importance_score}
-        """
-        matrix = self._get_rating_matrix()
-        user_ratings = matrix.get_user_ratings(user_id)
-        
-        amenity_scores = defaultdict(float)
-        total_weight = 0
-        
-        for property_id, rating in user_ratings.items():
-            if rating >= min_rating:
-                # Get amenities for this property
-                amenities = self.db.get_property_amenities(property_id)
-                
-                # Weight by rating (5-star property amenities are more important)
-                weight = rating / 5.0
-                total_weight += weight
-                
-                for amenity in amenities:
-                    amenity_scores[amenity['amenity_id']] += weight
-        
-        # Normalize scores
-        if total_weight > 0:
-            for amenity_id in amenity_scores:
-                amenity_scores[amenity_id] /= total_weight
-        
-        return dict(amenity_scores)
-    
-    def _calculate_content_similarity(self, property_id: int, liked_amenities: Dict[int, float]) -> float:
-        """
-        Calculate how well a property matches user's liked amenities
-        Returns score 0-1
-        """
-        if not liked_amenities:
-            return 0.0
-        
-        property_amenities = self.db.get_property_amenities(property_id)
-        property_amenity_ids = set(a['amenity_id'] for a in property_amenities)
-        
-        if not property_amenity_ids:
-            return 0.0
-        
-        # Calculate match score
-        match_score = 0
-        for amenity_id in property_amenity_ids:
-            if amenity_id in liked_amenities:
-                match_score += liked_amenities[amenity_id]
-        
-        # Normalize by number of property amenities
-        return min(1.0, match_score)
-    
-    def get_hybrid_recommendations(self, user_id: int, limit: int = 10) -> List[dict]:
-        """
-        Enhanced hybrid recommendations combining:
-        1. User-Based CF (40%)
-        2. Item-Based CF (30%)  
-        3. Content Features from highly-rated properties (30%)
-        """
-        matrix = self._get_rating_matrix()
-        
-        if not matrix.has_user(user_id):
-            return []
-        
-        # Get properties already rated
-        rated_properties = set(self.db.get_user_rated_properties(user_id))
-        all_properties = self.db.get_active_properties(exclude_ids=list(rated_properties))
-        
-        if not all_properties:
-            return []
-        
-        # Get user's liked amenities from highly-rated properties
-        liked_amenities = self._get_user_liked_amenities(user_id, min_rating=3.5)
-        
-        # Find similar users
-        similar_users = self.find_similar_users(user_id, k=self.k_neighbors)
-        
-        # Get user's ratings for item-based CF
-        user_ratings = matrix.get_user_ratings(user_id)
-        
-        recommendations = {}
-        
-        for property_data in all_properties:
+        for property_data in candidate_properties:
             property_id = property_data['id']
-            scores = {
-                'user_based': 0,
-                'item_based': 0,
-                'content': 0
-            }
             
-            # 1. User-Based CF Score (40%)
-            if similar_users:
-                weighted_sum = 0
-                similarity_sum = 0
-                
-                for similar_user in similar_users:
-                    rating = matrix.get_rating(similar_user.user_id, property_id)
-                    if rating is not None:
-                        weighted_sum += similar_user.similarity * rating
-                        similarity_sum += abs(similar_user.similarity)
-                
-                if similarity_sum > 0:
-                    predicted_rating = weighted_sum / similarity_sum
-                    scores['user_based'] = (predicted_rating / 5.0) * 0.4
+            # 1. USER-BASED CF SCORE (40%)
+            user_cf_score = self._get_user_based_score(user_id, property_id)
             
-            # 2. Item-Based CF Score (30%)
-            similar_properties = self.find_similar_properties(property_id, k=self.k_neighbors)
+            # 2. ITEM-BASED CF SCORE (30%)
+            item_cf_score = self._get_item_based_score(user_id, property_id, user_ratings)
             
-            if similar_properties and user_ratings:
-                weighted_sum = 0
-                similarity_sum = 0
-                
-                for similar_prop in similar_properties:
-                    if similar_prop.property_id in user_ratings:
-                        user_rating = user_ratings[similar_prop.property_id]
-                        weighted_sum += similar_prop.similarity * user_rating
-                        similarity_sum += abs(similar_prop.similarity)
-                
-                if similarity_sum > 0:
-                    predicted_rating = weighted_sum / similarity_sum
-                    scores['item_based'] = (predicted_rating / 5.0) * 0.3
+            # 3. CONTENT-BASED SCORE (30%)
+            content_score = self._calculate_content_score(property_data, user_preference)
             
-            # 3. Content Feature Score (30%) - NEW!
-            if liked_amenities:
-                content_score = self._calculate_content_similarity(property_id, liked_amenities)
-                scores['content'] = content_score * 0.3
+            # WEIGHTED COMBINATION
+            final_score = (
+                user_cf_score * 0.40 +
+                item_cf_score * 0.30 +
+                content_score * 0.30
+            )
             
-            # Calculate final score
-            final_score = sum(scores.values())
+            # Convert to predicted rating (0-5 scale)
+            predicted_rating = final_score * 5.0
             
-            if final_score > 0:
-                recommendations[property_id] = {
-                    'property_id': property_id,
-                    'title': property_data['title'],
-                    'address': property_data['address'],
-                    'price': float(property_data['price']),
-                    'distance_from_campus': float(property_data['distance_from_campus']) if property_data.get('distance_from_campus') else None,
-                    'predicted_rating': round(final_score * 5, 2),  # Scale back to 1-5
-                    'confidence': round(min(1.0, sum(1 for s in scores.values() if s > 0) / 3), 2),
-                    'algorithm': 'enhanced_hybrid_cf',
-                    'score_breakdown': {
-                        'user_based': round(scores['user_based'], 3),
-                        'item_based': round(scores['item_based'], 3),
-                        'content': round(scores['content'], 3)
-                    }
+            # Confidence based on CF availability
+            confidence = self._calculate_confidence(user_cf_score, item_cf_score)
+            
+            recommendations.append({
+                'property_id': property_id,
+                'predicted_rating': round(predicted_rating, 2),
+                'confidence': confidence,
+                'algorithm': 'hybrid',
+                'score_breakdown': {
+                    'user_based': round(user_cf_score, 3),
+                    'item_based': round(item_cf_score, 3),
+                    'content': round(content_score, 3)
                 }
+            })
         
-        # Sort by final score
-        sorted_recs = sorted(recommendations.values(), 
-                           key=lambda x: x['predicted_rating'], 
-                           reverse=True)
+        # Sort by predicted rating
+        recommendations.sort(key=lambda x: x['predicted_rating'], reverse=True)
         
-        return sorted_recs[:limit]
+        return recommendations[:limit]
     
-    def get_user_based_recommendations(self, user_id: int, limit: int = 10) -> List[dict]:
-        """Pure User-Based CF"""
-        matrix = self._get_rating_matrix()
+    def _get_user_based_score(self, user_id: int, property_id: int) -> float:
+        """Get user-based CF score (0-1)"""
+        if self.user_similarity_matrix is None or user_id not in self.user_item_matrix.index:
+            return 0.5  # Neutral score
         
-        if not matrix.has_user(user_id):
+        # Get similar users
+        similar_users = self.find_similar_users(user_id, k=10)
+        
+        if not similar_users:
+            return 0.5
+        
+        # Weighted average of similar users' ratings
+        weighted_sum = 0.0
+        similarity_sum = 0.0
+        
+        for sim_user in similar_users:
+            sim_user_id = sim_user.user_id
+            similarity = sim_user.similarity
+            
+            # Check if similar user rated this property
+            if property_id in self.user_item_matrix.columns:
+                rating = self.user_item_matrix.loc[sim_user_id, property_id]
+                if rating > 0:
+                    weighted_sum += similarity * rating
+                    similarity_sum += similarity
+        
+        if similarity_sum > 0:
+            predicted_rating = weighted_sum / similarity_sum
+            return min(predicted_rating / 5.0, 1.0)  # Normalize to 0-1
+        
+        return 0.5
+    
+    def _get_item_based_score(self, user_id: int, property_id: int, user_ratings: List[Dict]) -> float:
+        """Get item-based CF score (0-1)"""
+        if self.item_similarity_matrix is None or property_id not in self.item_similarity_matrix.index:
+            return 0.5
+        
+        # Find properties user has rated highly (4+)
+        highly_rated = [r for r in user_ratings if r['rating'] >= 4.0]
+        
+        if not highly_rated:
+            return 0.5
+        
+        # Calculate similarity to highly rated properties
+        similarities = []
+        for rated_prop in highly_rated:
+            rated_id = rated_prop['property_id']
+            if rated_id in self.item_similarity_matrix.columns:
+                sim = self.item_similarity_matrix.loc[property_id, rated_id]
+                similarities.append(sim)
+        
+        if similarities:
+            avg_similarity = np.mean(similarities)
+            return max(0, min(avg_similarity, 1.0))
+        
+        return 0.5
+    
+    def _calculate_confidence(self, user_cf_score: float, item_cf_score: float) -> str:
+        """Calculate confidence level"""
+        # High confidence if both CF methods contributed
+        if user_cf_score > 0.6 and item_cf_score > 0.6:
+            return 'high'
+        elif user_cf_score > 0.4 or item_cf_score > 0.4:
+            return 'medium'
+        else:
+            return 'low'
+    
+    def find_similar_users(self, user_id: int, k: int = 10) -> List[SimilarUser]:
+        """Find k most similar users"""
+        self._ensure_matrices()
+        
+        if self.user_similarity_matrix is None or user_id not in self.user_similarity_matrix.index:
             return []
         
-        rated_properties = set(self.db.get_user_rated_properties(user_id))
-        all_properties = self.db.get_active_properties(exclude_ids=list(rated_properties))
+        # Get similarities for this user
+        similarities = self.user_similarity_matrix.loc[user_id].sort_values(ascending=False)
         
-        if not all_properties:
+        # Exclude self and get top k
+        similarities = similarities[similarities.index != user_id]
+        top_similar = similarities.head(k)
+        
+        similar_users = []
+        for sim_user_id, similarity in top_similar.items():
+            if similarity > 0:
+                # Count common ratings
+                user_ratings = set(self.user_item_matrix.loc[user_id][self.user_item_matrix.loc[user_id] > 0].index)
+                sim_ratings = set(self.user_item_matrix.loc[sim_user_id][self.user_item_matrix.loc[sim_user_id] > 0].index)
+                common_count = len(user_ratings & sim_ratings)
+                
+                similar_users.append(SimilarUser(int(sim_user_id), float(similarity), common_count))
+        
+        return similar_users
+    
+    def find_similar_properties(self, property_id: int, k: int = 10) -> List[SimilarProperty]:
+        """Find k most similar properties"""
+        self._ensure_matrices()
+        
+        if self.item_similarity_matrix is None or property_id not in self.item_similarity_matrix.index:
             return []
         
-        similar_users = self.find_similar_users(user_id, k=self.k_neighbors)
+        similarities = self.item_similarity_matrix.loc[property_id].sort_values(ascending=False)
+        similarities = similarities[similarities.index != property_id]
+        top_similar = similarities.head(k)
+        
+        similar_properties = []
+        for sim_prop_id, similarity in top_similar.items():
+            if similarity > 0:
+                # Count common users
+                prop_users = set(self.user_item_matrix[property_id][self.user_item_matrix[property_id] > 0].index)
+                sim_users = set(self.user_item_matrix[sim_prop_id][self.user_item_matrix[sim_prop_id] > 0].index)
+                common_count = len(prop_users & sim_users)
+                
+                similar_properties.append(SimilarProperty(int(sim_prop_id), float(similarity), common_count))
+        
+        return similar_properties
+    
+    def get_user_based_recommendations(self, user_id: int, limit: int = 10) -> List[Dict]:
+        """Pure user-based CF recommendations"""
+        self._ensure_matrices()
+        
+        similar_users = self.find_similar_users(user_id, k=20)
         
         if not similar_users:
             return []
         
-        predictions = []
+        user_ratings = self.db.get_user_ratings(user_id)
+        rated_ids = [r['property_id'] for r in user_ratings]
         
-        for property_data in all_properties:
-            property_id = property_data['id']
-            
-            weighted_sum = 0
-            similarity_sum = 0
-            
-            for similar_user in similar_users:
-                rating = matrix.get_rating(similar_user.user_id, property_id)
-                if rating is not None:
-                    weighted_sum += similar_user.similarity * rating
-                    similarity_sum += abs(similar_user.similarity)
-            
-            if similarity_sum > 0:
-                predicted_rating = weighted_sum / similarity_sum
-                confidence = min(1.0, similarity_sum / len(similar_users))
-                
-                predictions.append({
-                    'property_id': property_id,
-                    'title': property_data['title'],
-                    'address': property_data['address'],
-                    'price': float(property_data['price']),
-                    'distance_from_campus': float(property_data['distance_from_campus']) if property_data.get('distance_from_campus') else None,
+        # Aggregate ratings from similar users
+        property_scores = {}
+        
+        for sim_user in similar_users:
+            sim_ratings = self.db.get_user_ratings(sim_user.user_id)
+            for rating in sim_ratings:
+                prop_id = rating['property_id']
+                if prop_id not in rated_ids:
+                    if prop_id not in property_scores:
+                        property_scores[prop_id] = {'sum': 0, 'weight': 0}
+                    property_scores[prop_id]['sum'] += rating['rating'] * sim_user.similarity
+                    property_scores[prop_id]['weight'] += sim_user.similarity
+        
+        # Calculate predictions
+        recommendations = []
+        for prop_id, scores in property_scores.items():
+            if scores['weight'] > 0:
+                predicted_rating = scores['sum'] / scores['weight']
+                recommendations.append({
+                    'property_id': prop_id,
                     'predicted_rating': round(predicted_rating, 2),
-                    'confidence': round(confidence, 2),
-                    'algorithm': 'user_based_cf'
+                    'confidence': 'medium'
                 })
         
-        predictions.sort(key=lambda x: x['predicted_rating'], reverse=True)
-        return predictions[:limit]
+        recommendations.sort(key=lambda x: x['predicted_rating'], reverse=True)
+        return recommendations[:limit]
     
-    def get_item_based_recommendations(self, user_id: int, limit: int = 10) -> List[dict]:
-        """Pure Item-Based CF"""
-        matrix = self._get_rating_matrix()
+    def get_item_based_recommendations(self, user_id: int, limit: int = 10) -> List[Dict]:
+        """Pure item-based CF recommendations"""
+        self._ensure_matrices()
         
-        if not matrix.has_user(user_id):
-            return []
-        
-        user_ratings = matrix.get_user_ratings(user_id)
-        
+        user_ratings = self.db.get_user_ratings(user_id)
         if not user_ratings:
             return []
         
-        rated_properties = set(user_ratings.keys())
-        all_properties = self.db.get_active_properties(exclude_ids=list(rated_properties))
+        rated_ids = [r['property_id'] for r in user_ratings]
+        highly_rated = [r for r in user_ratings if r['rating'] >= 4.0]
         
-        if not all_properties:
+        if not highly_rated:
             return []
         
-        predictions = []
+        # Find similar properties
+        property_scores = {}
         
-        for property_data in all_properties:
-            property_id = property_data['id']
-            
-            similar_properties = self.find_similar_properties(property_id, k=self.k_neighbors)
-            
-            if not similar_properties:
-                continue
-            
-            weighted_sum = 0
-            similarity_sum = 0
-            
-            for similar_prop in similar_properties:
-                if similar_prop.property_id in user_ratings:
-                    user_rating = user_ratings[similar_prop.property_id]
-                    weighted_sum += similar_prop.similarity * user_rating
-                    similarity_sum += abs(similar_prop.similarity)
-            
-            if similarity_sum > 0:
-                predicted_rating = weighted_sum / similarity_sum
-                confidence = min(1.0, similarity_sum / len(similar_properties))
-                
-                predictions.append({
-                    'property_id': property_id,
-                    'title': property_data['title'],
-                    'address': property_data['address'],
-                    'price': float(property_data['price']),
-                    'distance_from_campus': float(property_data['distance_from_campus']) if property_data.get('distance_from_campus') else None,
-                    'predicted_rating': round(predicted_rating, 2),
-                    'confidence': round(confidence, 2),
-                    'algorithm': 'item_based_cf'
-                })
+        for rating in highly_rated:
+            similar_props = self.find_similar_properties(rating['property_id'], k=20)
+            for sim_prop in similar_props:
+                if sim_prop.property_id not in rated_ids:
+                    if sim_prop.property_id not in property_scores:
+                        property_scores[sim_prop.property_id] = 0
+                    property_scores[sim_prop.property_id] += sim_prop.similarity * rating['rating']
         
-        predictions.sort(key=lambda x: x['predicted_rating'], reverse=True)
-        return predictions[:limit]
+        recommendations = []
+        for prop_id, score in property_scores.items():
+            recommendations.append({
+                'property_id': prop_id,
+                'predicted_rating': round(min(score, 5.0), 2),
+                'confidence': 'medium'
+            })
+        
+        recommendations.sort(key=lambda x: x['predicted_rating'], reverse=True)
+        return recommendations[:limit]
     
     def predict_rating(self, user_id: int, property_id: int) -> float:
-        """Predict rating for a user-property pair"""
-        matrix = self._get_rating_matrix()
+        """Predict rating for user-property pair"""
+        # Use hybrid approach
+        recommendations = self.get_hybrid_recommendations(user_id, limit=100)
         
-        if not matrix.has_user(user_id) or not matrix.has_property(property_id):
-            return self.global_mean
+        for rec in recommendations:
+            if rec['property_id'] == property_id:
+                return rec['predicted_rating']
         
-        existing_rating = matrix.get_rating(user_id, property_id)
-        if existing_rating is not None:
-            return existing_rating
-        
-        similar_users = self.find_similar_users(user_id, k=self.k_neighbors)
-        
-        if not similar_users:
-            return self.user_means.get(user_id, self.global_mean)
-        
-        weighted_sum = 0
-        similarity_sum = 0
-        
-        for similar_user in similar_users:
-            rating = matrix.get_rating(similar_user.user_id, property_id)
-            if rating is not None:
-                weighted_sum += similar_user.similarity * rating
-                similarity_sum += abs(similar_user.similarity)
-        
-        if similarity_sum == 0:
-            return self.user_means.get(user_id, self.global_mean)
-        
-        predicted_rating = weighted_sum / similarity_sum
-        return max(1.0, min(5.0, predicted_rating))
+        # Fallback to 3.0 (neutral)
+        return 3.0
     
     def clear_cache(self):
-        """Clear cached rating matrix"""
-        self.rating_matrix = None
-        self.user_means = {}
-        self.global_mean = 3.5
+        """Clear cached matrices"""
+        self.user_item_matrix = None
+        self.user_similarity_matrix = None
+        self.item_similarity_matrix = None
+        self.cache = {}
+        logger.info("Cache cleared")
