@@ -1,4 +1,4 @@
-<<<<<<< HEAD
+
 import pymysql
 import os
 from dotenv import load_dotenv
@@ -229,4 +229,3 @@ class Database:
         if self.connection:
             self.connection.close()
 
->>>>>>> 86a58891953078be2aad369e8c9396b449a91fdc
