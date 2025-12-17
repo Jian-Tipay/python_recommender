@@ -1,4 +1,4 @@
-<<<<<<< HEAD
+
 import numpy as np
 import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
@@ -1288,4 +1288,3 @@ class EnhancedCollaborativeFilteringEngine:
         self.item_similarity_matrix = None
         self.cache = {}
         logger.info("Cache cleared")
->>>>>>> 86a58891953078be2aad369e8c9396b449a91fdc
