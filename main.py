@@ -1,4 +1,4 @@
-<<<<<<< HEAD
+
 import sys
 import os
 from datetime import datetime, timedelta
@@ -1015,4 +1015,3 @@ if __name__ == "__main__":
         port=8001,
         log_level="info"
     )
->>>>>>> 86a58891953078be2aad369e8c9396b449a91fdc
