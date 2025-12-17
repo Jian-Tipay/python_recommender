@@ -1,4 +1,4 @@
-<<<<<<< HEAD
+
 from dataclasses import dataclass
 from typing import List, Optional
 from datetime import datetime
@@ -348,5 +348,4 @@ class RatingMatrix:
     
     def has_property(self, property_id: int) -> bool:
         """Check if property exists in matrix"""
->>>>>>> 86a58891953078be2aad369e8c9396b449a91fdc
         return property_id in self.properties
