@@ -15,7 +15,7 @@ import uvicorn
 import logging
 
 logging.basicConfig(level=logging.INFO)
-logging.getLogger("httpx").setLevel(logging.WARNING)  # Reduce noise
+logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 from cf_algo_enhanced_weights import EnhancedCollaborativeFilteringEngine
@@ -37,10 +37,9 @@ class SmartDataManager:
         self.cf_engine = None
         self.last_full_refresh = None
         self.auto_refresh_interval = timedelta(minutes=auto_refresh_minutes)
-        self.user_cache_invalidated = set()  # Track users with stale cache
+        self.user_cache_invalidated = set()
         self.lock = Lock()
 
-        # Initial load
         self._full_refresh()
 
     def _full_refresh(self):
@@ -67,25 +66,21 @@ class SmartDataManager:
         - Force refreshes if requested
         - Per-user refresh if that user's cache is stale
         """
-        # 1. Force refresh requested
         if force:
             logger.info(f"🔄 Force refresh requested (user: {user_id})")
             self._full_refresh()
             return self.database, self.cf_engine
 
-        # 2. Check if user-specific refresh needed
         if user_id and user_id in self.user_cache_invalidated:
             logger.info(f"🔄 User {user_id} cache invalidated, refreshing...")
             self._full_refresh()
             return self.database, self.cf_engine
 
-        # 3. Auto-refresh if interval passed
         if self.should_auto_refresh():
             logger.info(f"🔄 Auto-refresh triggered (interval: {self.auto_refresh_interval})")
             self._full_refresh()
             return self.database, self.cf_engine
 
-        # 4. Use cached data
         return self.database, self.cf_engine
 
     def invalidate_user_cache(self, user_id: int):
@@ -127,7 +122,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Initialize Smart Data Manager (auto-refreshes every 5 minutes)
 data_manager = SmartDataManager(auto_refresh_minutes=5)
 
 logger.info("✅ Smart Data Manager initialized!")
@@ -136,7 +130,7 @@ logger.info("⚡ Per-user cache invalidation: Enabled")
 
 
 # ============================================================================
-# Helper Functions (same as before)
+# Helper Functions
 # ============================================================================
 def get_user_activity_profile(user_id: int, database) -> Dict:
     """Get user activity profile"""
@@ -313,7 +307,6 @@ def get_recommendations(
         force_refresh_bool = force_refresh.lower() in ['true', '1', 'yes']
         include_rated_bool = include_rated.lower() in ['true', '1', 'yes']
 
-        # 🔥 Get fresh data (auto-refreshes if needed)
         database, cf_engine = data_manager.get_fresh_data(
             user_id=user_id,
             force=force_refresh_bool
@@ -325,7 +318,6 @@ def get_recommendations(
 
         logger.info(f"User {user_id} - Strategy: {strategy_name}")
 
-        # Generate recommendations
         if strategy_name == 'new_user':
             recommendations = cf_engine.get_cold_start_recommendations(
                 user_id, limit, include_rated=include_rated_bool
@@ -428,9 +420,6 @@ def retrain_model():
     return force_refresh()
 
 
-# ============================================================================
-# Additional endpoints (same as before, just use data_manager)
-# ============================================================================
 @app.get("/user-profile/{user_id}")
 def get_user_profile(user_id: int):
     database, _ = data_manager.get_fresh_data(user_id=user_id)
@@ -478,4 +467,4 @@ if __name__ == "__main__":
     print(f"\n  🎯 NO RESTART NEEDED - Data stays fresh automatically!")
     print("="*80 + "\n")
 
-    uvicorn.run(app, host="127.0.0.1", port=8001, log_level="info")
+    uvicorn.run(app, host="0.0.0.0", port=8001, log_level="info")
