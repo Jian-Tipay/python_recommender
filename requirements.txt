@@ -1,0 +1,24 @@
+# FastAPI Framework
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+
+# Environment Variables
+python-dotenv==1.0.1
+
+# Database
+pymysql==1.1.1
+cryptography==44.0.0
+
+# Scientific Computing & ML
+numpy==1.26.4
+pandas==2.2.3
+scikit-learn==1.5.2
+
+# Data Validation
+pydantic==2.10.3
+
+# HTTP Requests (optional, for inter-service communication)
+requests==2.32.3
+
+# Logging (optional, enhanced logging)
+python-json-logger==3.2.1
